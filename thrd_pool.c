@@ -5,14 +5,6 @@
 #include "thrd_pool.h"
 #include "spinlock.h"
 
-/*
- * shell: gcc thrd_pool.c -c -fPIC
- * shell: gcc -shared thrd_pool.o -o libthrd_pool.so -I./ -L./ -lpthread
- * usage: include thrd_pool.h & link libthrd_pool.so
- */
-
-// _s 表示 struct 定义的结构体
-// _t 表示 typedef 定义的新类型 
 typedef struct spinlock spinlock_t;
 
 typedef struct task_s {
@@ -23,7 +15,7 @@ typedef struct task_s {
 
 typedef struct task_queue_s {
     void *head;
-    void **tail; 
+    void **tail;
     int block;
     spinlock_t lock;
     pthread_mutex_t mutex;
@@ -37,18 +29,15 @@ struct thrdpool_s {
     pthread_t *threads;
 };
 
-// 对称
-// 资源的创建   回滚式编程
-// 业务逻辑     防御式编程
 static task_queue_t *
 __taskqueue_create() {
     int ret;
     task_queue_t *queue = (task_queue_t *)malloc(sizeof(task_queue_t));
-    if (queue) {
+    if(queue) {
         ret = pthread_mutex_init(&queue->mutex, NULL);
-        if (ret == 0) {
+        if(ret == 0) {
             ret = pthread_cond_init(&queue->cond, NULL);
-            if (ret == 0) {
+            if(ret == 0) {
                 spinlock_init(&queue->lock);
                 queue->head = NULL;
                 queue->tail = &queue->head;
@@ -70,29 +59,28 @@ __nonblock(task_queue_t *queue) {
     pthread_cond_broadcast(&queue->cond);
 }
 
-static inline void 
+static inline void
 __add_task(task_queue_t *queue, void *task) {
-    // 不限定任务类型，只要该任务的结构起始内存是一个用于链接下一个节点的指针
     void **link = (void**)task;
     *link = NULL;
 
     spinlock_lock(&queue->lock);
-    *queue->tail /* 等价于 queue->tail->next */ = link;
+    *queue->tail = link;
     queue->tail = link;
     spinlock_unlock(&queue->lock);
+
     pthread_cond_signal(&queue->cond);
 }
 
-static inline void * 
+static inline void *
 __pop_task(task_queue_t *queue) {
     spinlock_lock(&queue->lock);
     if (queue->head == NULL) {
         spinlock_unlock(&queue->lock);
         return NULL;
     }
-    task_t *task;
-    task = queue->head;
 
+    task_t *task = queue->head;
     void **link = (void**)task;
     queue->head = *link;
 
@@ -103,21 +91,17 @@ __pop_task(task_queue_t *queue) {
     return task;
 }
 
-static inline void * 
+static inline void *
 __get_task(task_queue_t *queue) {
     task_t *task;
-    // 虚假唤醒
     while ((task = __pop_task(queue)) == NULL) {
         pthread_mutex_lock(&queue->mutex);
+
         if (queue->block == 0) {
             pthread_mutex_unlock(&queue->mutex);
             return NULL;
         }
-        // 1. 先 unlock(&mtx)
-        // 2. 在 cond 休眠
-        // --- __add_task 时唤醒
-        // 3. 在 cond 唤醒
-        // 4. 加上 lock(&mtx);
+
         pthread_cond_wait(&queue->cond, &queue->mutex);
         pthread_mutex_unlock(&queue->mutex);
     }
@@ -138,71 +122,63 @@ __taskqueue_destroy(task_queue_t *queue) {
 
 static void *
 __thrdpool_worker(void *arg) {
-    thrdpool_t *pool = (thrdpool_t*) arg;
+    thrdpool_t *pool = (thrdpool_t *)arg;
     task_t *task;
     void *ctx;
 
     while (atomic_load(&pool->quit) == 0) {
-        task = (task_t*)__get_task(pool->task_queue);
+        task = (task_t *)__get_task(pool->task_queue);
         if (!task) break;
         handler_pt func = task->func;
         ctx = task->arg;
         free(task);
         func(ctx);
     }
-    
     return NULL;
 }
 
-static void 
-__threads_terminate(thrdpool_t * pool) {
+static void
+__threads_terminate(thrdpool_t *pool) {
     atomic_store(&pool->quit, 1);
     __nonblock(pool->task_queue);
+
     int i;
-    for (i=0; i<pool->thrd_count; i++) {
+    for (i = 0; i < pool->thrd_count; i++) {
         pthread_join(pool->threads[i], NULL);
     }
 }
 
-static int 
+static int
 __threads_create(thrdpool_t *pool, size_t thrd_count) {
     pthread_attr_t attr;
-	int ret;
-
+    int ret;
     ret = pthread_attr_init(&attr);
 
     if (ret == 0) {
         pool->threads = (pthread_t *)malloc(sizeof(pthread_t) * thrd_count);
         if (pool->threads) {
             int i = 0;
-            for (; i < thrd_count; i++) {
+            for(; i < thrd_count; i++) {
                 if (pthread_create(&pool->threads[i], &attr, __thrdpool_worker, pool) != 0) {
                     break;
                 }
             }
             pool->thrd_count = i;
             pthread_attr_destroy(&attr);
-            if (i == thrd_count)
+            if ( i == thrd_count)
                 return 0;
             __threads_terminate(pool);
             free(pool->threads);
         }
         ret = -1;
     }
-    return ret; 
-}
-
-void
-thrdpool_terminate(thrdpool_t * pool) {
-    atomic_store(&pool->quit, 1);
-    __nonblock(pool->task_queue);
+    return ret;
 }
 
 thrdpool_t *
 thrdpool_create(int thrd_count) {
     thrdpool_t *pool;
-
-    pool = (thrdpool_t*)malloc(sizeof(*pool));
+    pool = (thrdpool_t*)malloc(sizeof(thrdpool_t));
     if (pool) {
         task_queue_t *queue = __taskqueue_create();
         if (queue) {
@@ -217,11 +193,11 @@ thrdpool_create(int thrd_count) {
     return NULL;
 }
 
-int
+int 
 thrdpool_post(thrdpool_t *pool, handler_pt func, void *arg) {
     if (atomic_load(&pool->quit) == 1) 
         return -1;
-    task_t *task = (task_t*) malloc(sizeof(task_t));
+    task_t *task = (task_t*)malloc(sizeof(task_t));
     if (!task) return -1;
     task->func = func;
     task->arg = arg;
@@ -229,13 +205,19 @@ thrdpool_post(thrdpool_t *pool, handler_pt func, void *arg) {
     return 0;
 }
 
-void
+void 
 thrdpool_waitdone(thrdpool_t *pool) {
     int i;
-    for (i=0; i<pool->thrd_count; i++) {
+    for (i = 0; i < pool->thrd_count; i++) {
         pthread_join(pool->threads[i], NULL);
     }
     __taskqueue_destroy(pool->task_queue);
     free(pool->threads);
     free(pool);
+}
+
+void
+thrdpool_terminate(thrdpool_t *pool) {
+    atomic_store(&pool->quit, 1);
+    __nonblock(pool->task_queue);
 }
