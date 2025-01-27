@@ -5,37 +5,28 @@
 #include "thrd_pool.h"
 #include "spinlock.h"
 
-/*
- * shell: gcc thrd_pool.c -c -fPIC
- * shell: gcc -shared thrd_pool.o -o libthrd_pool.so -I./ -L./ -lpthread
- * usage: include thrd_pool.h & link libthrd_pool.so
- */
 
 // _s 表示 struct 定义的结构体
 // _t 表示 typedef 定义的新类型 
 
-
 typedef struct spinlock spinlock_t;
 
-// 单个 task_t 结构体
 typedef struct task_s {
     void *next;
-    // 当任务被取出准备执行时，工作线程会调用 func 函数
     handler_pt func;
     void *arg;
 } task_t;
 
-
-// 任务队列 task_queue_t 结构体
 typedef struct task_queue_s {
     // head 指向 task_queue_t 中第一个任务
     void *head;
-    // tail 指向 task_queue_t 中最后一个任务的 next 成员
+    // tail 是 task_queue_t 中最后一个任务的 next 成员的地址
     void **tail; 
-    // block == 0：非阻塞模式
-    // 当 task_queue_t 为空时，消费者线程不会阻塞(挂起)
+
+    // 1. block == 0：非阻塞模式
+    // 当消费者线程从 task_queue_t 中获取任务为 NULL 时，消费者线程不会阻塞(挂起)
     // block == 1：阻塞模式
-    // 当 task_queue_t 为空时，消费者线程会被阻塞，直到被唤醒为止
+    // 当消费者线程从 task_queue_t 中获取任务为 NULL 时，消费者线程被会阻塞(被挂起)
     int block;
 
     // spinlock_t：自旋锁，通过不断"自旋"来尝试持有该锁，不会让线程被挂起
@@ -47,10 +38,9 @@ typedef struct task_queue_s {
     pthread_cond_t cond;
 } task_queue_t;
 
-
-// 线程池 thrdpool_t 结构体
 struct thrdpool_s {
     task_queue_t *task_queue;
+
     // quit = 0：线程池正常运行，线程持续获取任务
     // quit = 1：线程池关闭，关闭所有线程
     atomic_int quit;
@@ -60,7 +50,6 @@ struct thrdpool_s {
     pthread_t *threads;
 };
 
-// 创建 task_queue_t：回滚式编程
 static task_queue_t *
 __taskqueue_create() {
     int ret;
@@ -148,7 +137,9 @@ __get_task(task_queue_t *queue) {
     // 虚假唤醒：使用 while 循环，确保每次线程被唤醒后都检查任务队列是否为空
     // 如果任务队列依旧为空，则线程继续进入阻塞状态
     while ((task = __pop_task(queue)) == NULL) {
+
         pthread_mutex_lock(&queue->mutex);
+        // 当调用 __nonblock() 设置 queue 为非阻塞时，将返回 NULL ，导致 __thrdpool_worker()返回，线程结束！！！
         if (queue->block == 0) {
             pthread_mutex_unlock(&queue->mutex);
             return NULL;

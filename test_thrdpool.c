@@ -4,6 +4,13 @@
 #include <pthread.h>
 #include "thrd_pool.h"
 
+/*
+    当前代码存在一个潜在的死锁问题：
+     在thrdpool_waitdone(pool)函数中，主线程会等待所有工作线程（通过pthread_join），
+    但在等待期间，如果工作线程完成了所有任务，它们会进入阻塞状态，等待新的任务被添加到队列。
+    然而，只有在thrdpool_terminate(pool)中才会调用__nonblock(pool->task_queue);来唤醒这些阻塞的线程。
+*/
+
 // 一个简单的任务函数，模拟工作负载
 void my_task(void *arg) {
     int num = *(int*)arg;
