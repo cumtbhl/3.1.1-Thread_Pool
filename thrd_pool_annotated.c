@@ -277,6 +277,7 @@ thrdpool_post(thrdpool_t *pool, handler_pt func, void *arg) {
     return 0;
 }
 
+// 等待所有线程结束并释放线程池资源
 void
 thrdpool_waitdone(thrdpool_t *pool) {
     int i;

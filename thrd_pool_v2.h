@@ -11,8 +11,10 @@ extern "C"
 
     thrdpool_t *thrdpool_create(int thrd_count);
     int thrdpool_post(thrdpool_t *pool, handler_pt func, void *arg);
+    void thrdpool_waitall(thrdpool_t *pool);
     void thrdpool_terminate(thrdpool_t *pool);
     void thrdpool_waitdone(thrdpool_t *pool);
+    void thrdpool_destroy(thrdpool_t *pool);
 
 #ifdef __cplusplus
 }
